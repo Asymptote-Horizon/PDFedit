@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Annotator — Images, Shapes, Drawing & Layers</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        body {
+            background-color: #18181f;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Top Toolbar */
+        .toolbar {
+            background-color: #252530;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #383847;
+            gap: 12px;
+            flex-wrap: wrap;
+            z-index: 20;
+        }
+
+        .toolbar-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .divider {
+            width: 1px;
+            height: 24px;
+            background: #3f3f52;
+            margin: 0 4px;
+        }
+
+        button, .file-label {
+            background-color: #383847;
+            color: #f3f4f6;
+            border: 1px solid #4b4b5e;
+            padding: 7px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        button:hover:not(:disabled), .file-label:hover {
+            background-color: #48485a;
+        }
+
+        button.primary, .file-label.primary {
+            background-color: #4f46e5;
+            border-color: #4f46e5;
+            color: white;
+        }
+
+        button.primary:hover:not(:disabled), .file-label.primary:hover {
+            background-color: #4338ca;
+        }
+
+        button.active-tool {
+            background-color: #ec4899;
+            border-color: #ec4899;
+            color: white;
+        }
+
+        button.success {
+            background-color: #10b981;
+            border-color: #10b981;
+            color: white;
+        }
+
+        button.success:hover:not(:disabled) {
+            background-color: #059669;
+        }
+
+        button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        input[type="color"] {
+            width: 32px;
+            height: 32px;
+            border: none;
+            border-radius: 6px;
+            background: none;
+            cursor: pointer;
+            padding: 0;
+        }
+
+        input[type="range"] {
+            width: 75px;
+            cursor: pointer;
+        }
+
+        .control-label {
+            font-size: 12px;
+            color: #cbd5e1;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .page-controls {
+            font-size: 13px;
+            background: #18181f;
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: 1px solid #383847;
+        }
+
+        /* Main Layout: Workspace + Right Layer Panel */
+        .main-body {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .workspace {
+            flex: 1;
+            overflow: auto;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 30px;
+            background-color: #121217;
+        }
+
+        .page-container {
+            position: relative;
+            box-shadow: 0 12px 35px rgba(0,0,0,0.7);
+            background: white;
+            display: none;
+            user-select: none;
+        }
+
+        #pdfCanvas {
+            display: block;
+        }
+
+        #drawCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 9999;
+            pointer-events: none;
+            cursor: crosshair;
+        }
+
+        #drawCanvas.drawing-active {
+            pointer-events: auto;
+        }
+
+        /* Layer Overlays (Images, Shapes, Handwriting) */
+        .layer-item {
+            position: absolute;
+            box-sizing: border-box;
+            cursor: move;
+        }
+
+        .layer-item.locked {
+            cursor: default;
+        }
+
+        .layer-item:not(.locked):hover,
+        .layer-item.selected:not(.locked) {
+            outline: 2px dashed #4f46e5;
+        }
+
+        .layer-item.locked.selected {
+            outline: 2px dashed #f59e0b;
+        }
+
+        .layer-item img {
+            width: 100%;
+            height: 100%;
+            display: block;
+            pointer-events: none;
+        }
+
+        /* Resize Handle */
+        .resize-handle {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background: #4f46e5;
+            border: 2px solid white;
+            border-radius: 50%;
+            bottom: -6px;
+            right: -6px;
+            cursor: nwse-resize;
+            display: none;
+        }
+
+        .layer-item.selected:not(.locked) .resize-handle {
+            display: block;
+        }
+
+        /* Right Sidebar: Layers Panel */
+        .sidebar {
+            width: 270px;
+            background-color: #252530;
+            border-left: 1px solid #383847;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 14px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            border-bottom: 1px solid #383847;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .layers-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .layer-row {
+            background: #1e1e26;
+            border: 1px solid #383847;
+            border-radius: 6px;
+            padding: 8px 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .layer-row:hover {
+            background: #2d2d3a;
+        }
+
+        .layer-row.selected {
+            border-color: #4f46e5;
+            background: rgba(79, 70, 229, 0.15);
+        }
+
+        .layer-name {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 125px;
+        }
+
+        .layer-actions {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .icon-btn {
+            background: transparent;
+            border: none;
+            padding: 3px 5px;
+            font-size: 12px;
+            color: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        .icon-btn:hover:not(:disabled) {
+            background: #3f3f52;
+            color: white;
+        }
+
+        .icon-btn.locked-active {
+            color: #f59e0b;
+        }
+
+        .icon-btn.delete-hover:hover {
+            background: #ef4444;
+            color: white;
+        }
+
+        .empty-state {
+            text-align: center;
+            margin-top: 18vh;
+            color: #9ca3af;
+        }
+
+        .empty-layers {
+            text-align: center;
+            color: #6b7280;
+            font-size: 12px;
+            margin-top: 30px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Top Toolbar -->
+    <div class="toolbar">
+        <div class="toolbar-group">
+            <label class="file-label primary">
+                📂 Open PDF
+                <input type="file" id="pdfInput" accept="application/pdf">
+            </label>
+
+            <div class="divider"></div>
+
+            <label class="file-label tool-Control" id="addImgLabel" style="opacity: 0.45; pointer-events: none;">
+                🖼️ Image
+                <input type="file" id="imgInput" accept="image/png, image/jpeg, image/jpg">
+            </label>
+
+            <button class="tool-btn" id="addRectBtn" disabled>▭ Rectangle</button>
+            <button class="tool-btn" id="addCircleBtn" disabled>◯ Circle</button>
+            <button class="tool-btn" id="addLineBtn" disabled>╱ Line</button>
+            <button class="tool-btn" id="drawToggleBtn" disabled>✏️ Draw</button>
+
+            <div class="divider"></div>
+
+            <label class="control-label" title="Color for Shapes & Drawing">
+                🎨 <input type="color" id="colorPicker" value="#ef4444">
+            </label>
+
+            <label class="control-label" title="Stroke Thickness">
+                📏 <input type="range" id="strokeWidth" min="1" max="15" value="3">
+            </label>
+        </div>
+
+        <div class="toolbar-group">
+            <button id="prevPage" disabled>◀</button>
+            <span class="page-controls" id="pageInfo">0 / 0</span>
+            <button id="nextPage" disabled>▶</button>
+        </div>
+
+        <div class="toolbar-group">
+            <button class="success" id="exportBtn" disabled>💾 Export PDF</button>
+        </div>
+    </div>
+
+    <!-- Main Body -->
+    <div class="main-body">
+        <div class="workspace" id="workspace">
+            <div class="empty-state" id="emptyState">
+                <h2>No PDF Loaded</h2>
+                <p style="margin-top: 8px;">Click <strong>Open PDF</strong> above to begin annotating.</p>
+            </div>
+
+            <div class="page-container" id="pageContainer">
+                <canvas id="pdfCanvas"></canvas>
+                <canvas id="drawCanvas"></canvas>
+            </div>
+        </div>
+
+        <!-- Right Layers Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <span>Layers (Current Page)</span>
+                <span id="layerCount" style="color: #9ca3af; font-size: 12px;">0</span>
+            </div>
+            <div class="layers-list" id="layersList">
+                <div class="empty-layers">No layers on this page yet.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        // State
+        let pdfBytes = null;
+        let pdfDoc = null;
+        let currentPage = 1;
+        let totalPages = 0;
+        const renderScale = 1.5;
+
+        // Layers array: ordered from bottom (index 0) to top (index length - 1)
+        let layers = [];
+        let selectedLayerId = null;
+        let isDrawMode = false;
+        let layerCounter = 1;
+
+        // DOM References
+        const pdfInput = document.getElementById('pdfInput');
+        const imgInput = document.getElementById('imgInput');
+        const addImgLabel = document.getElementById('addImgLabel');
+        const addRectBtn = document.getElementById('addRectBtn');
+        const addCircleBtn = document.getElementById('addCircleBtn');
+        const addLineBtn = document.getElementById('addLineBtn');
+        const drawToggleBtn = document.getElementById('drawToggleBtn');
+        const colorPicker = document.getElementById('colorPicker');
+        const strokeWidthInput = document.getElementById('strokeWidth');
+        const prevPageBtn = document.getElementById('prevPage');
+        const nextPageBtn = document.getElementById('nextPage');
+        const pageInfo = document.getElementById('pageInfo');
+        const exportBtn = document.getElementById('exportBtn');
+        const emptyState = document.getElementById('emptyState');
+        const pageContainer = document.getElementById('pageContainer');
+        const pdfCanvas = document.getElementById('pdfCanvas');
+        const pdfCtx = pdfCanvas.getContext('2d');
+        const drawCanvas = document.getElementById('drawCanvas');
+        const drawCtx = drawCanvas.getContext('2d');
+        const layersList = document.getElementById('layersList');
+        const layerCount = document.getElementById('layerCount');
+
+        // 1. Open PDF
+        pdfInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const arrayBuffer = await file.arrayBuffer();
+            pdfBytes = new Uint8Array(arrayBuffer);
+            pdfDoc = await pdfjsLib.getDocument({ data: pdfBytes.slice() }).promise;
+
+            totalPages = pdfDoc.numPages;
+            currentPage = 1;
+            layers = [];
+            selectedLayerId = null;
+            layerCounter = 1;
+
+            emptyState.style.display = 'none';
+            pageContainer.style.display = 'block';
+            addImgLabel.style.opacity = '1';
+            addImgLabel.style.pointerEvents = 'auto';
+
+            [addRectBtn, addCircleBtn, addLineBtn, drawToggleBtn, exportBtn].forEach(btn => btn.disabled = false);
+
+            renderPage(currentPage);
+        });
+
+        // 2. Render PDF Page
+        async function renderPage(pageNum) {
+            const page = await pdfDoc.getPage(pageNum);
+            const viewport = page.getViewport({ scale: renderScale });
+
+            pdfCanvas.width = viewport.width;
+            pdfCanvas.height = viewport.height;
+            drawCanvas.width = viewport.width;
+            drawCanvas.height = viewport.height;
+
+            pageContainer.style.width = `${viewport.width}px`;
+            pageContainer.style.height = `${viewport.height}px`;
+
+            await page.render({ canvasContext: pdfCtx, viewport }).promise;
+
+            pageInfo.textContent = `${currentPage} / ${totalPages}`;
+            prevPageBtn.disabled = currentPage <= 1;
+            nextPageBtn.disabled = currentPage >= totalPages;
+
+            renderAllLayers();
+        }
+
+        prevPageBtn.addEventListener('click', () => {
+            if (currentPage > 1) {
+                currentPage--;
+                selectedLayerId = null;
+                renderPage(currentPage);
+            }
+        });
+
+        nextPageBtn.addEventListener('click', () => {
+            if (currentPage < totalPages) {
+                currentPage++;
+                selectedLayerId = null;
+                renderPage(currentPage);
+            }
+        });
+
+        // Deselect when clicking blank PDF area
+        pdfCanvas.addEventListener('mousedown', () => {
+            if (!isDrawMode && selectedLayerId !== null) {
+                selectedLayerId = null;
+                renderAllLayers();
+            }
+        });
+
+        // 3. Add Image (Fixed Aspect Ratio)
+        imgInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            disableDrawMode();
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                    const aspectRatio = img.width / img.height;
+                    const wPct = 0.25;
+                    const hPct = (pdfCanvas.width * wPct) / aspectRatio / pdfCanvas.height;
+
+                    const newLayer = {
+                        id: Date.now(),
+                        name: `Image ${layerCounter++}`,
+                        type: 'image',
+                        page: currentPage,
+                        dataUrl: event.target.result,
+                        imgType: file.type,
+                        aspectRatio: aspectRatio,
+                        lockAspect: true,
+                        xPct: 0.1,
+                        yPct: 0.1,
+                        wPct: wPct,
+                        hPct: hPct,
+                        locked: false
+                    };
+
+                    layers.push(newLayer);
+                    selectedLayerId = newLayer.id;
+                    renderAllLayers();
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+            imgInput.value = '';
+        });
+
+        // 4. Add Basic Shapes (Rectangle, Circle, Line)
+        function addShape(shapeType, label) {
+            disableDrawMode();
+            const isLine = shapeType === 'line';
+            const wPct = 0.2;
+            const hPct = isLine ? 0.04 : (pdfCanvas.width * wPct) / pdfCanvas.height;
+
+            const newLayer = {
+                id: Date.now(),
+                name: `${label} ${layerCounter++}`,
+                type: 'shape',
+                shapeType: shapeType,
+                page: currentPage,
+                color: colorPicker.value,
+                strokeWidth: parseInt(strokeWidthInput.value, 10),
+                lockAspect: false,
+                xPct: 0.15,
+                yPct: 0.15,
+                wPct: wPct,
+                hPct: hPct,
+                locked: false
+            };
+
+            layers.push(newLayer);
+            selectedLayerId = newLayer.id;
+            renderAllLayers();
+        }
+
+        addRectBtn.addEventListener('click', () => addShape('rect', 'Rectangle'));
+        addCircleBtn.addEventListener('click', () => addShape('circle', 'Circle'));
+        addLineBtn.addEventListener('click', () => addShape('line', 'Line'));
+
+        // Live update color/stroke if a shape or drawing layer is currently selected
+        colorPicker.addEventListener('input', () => {
+            const layer = layers.find(l => l.id === selectedLayerId);
+            if (layer && !layer.locked && (layer.type === 'shape' || layer.type === 'drawing')) {
+                layer.color = colorPicker.value;
+                renderAllLayers();
+            }
+        });
+
+        strokeWidthInput.addEventListener('input', () => {
+            const layer = layers.find(l => l.id === selectedLayerId);
+            if (layer && !layer.locked && (layer.type === 'shape' || layer.type === 'drawing')) {
+                layer.strokeWidth = parseInt(strokeWidthInput.value, 10);
+                renderAllLayers();
+            }
+        });
+
+        // 5. Freehand Handwriting / Drawing Tool
+        function disableDrawMode() {
+            isDrawMode = false;
+            drawToggleBtn.classList.remove('active-tool');
+            drawCanvas.classList.remove('drawing-active');
+        }
+
+        drawToggleBtn.addEventListener('click', () => {
+            isDrawMode = !isDrawMode;
+            if (isDrawMode) {
+                selectedLayerId = null;
+                renderAllLayers();
+                drawToggleBtn.classList.add('active-tool');
+                drawCanvas.classList.add('drawing-active');
+            } else {
+                disableDrawMode();
+            }
+        });
+
+        let isDrawingStroke = false;
+        let currentPoints = [];
+
+        drawCanvas.addEventListener('mousedown', (e) => {
+            if (!isDrawMode) return;
+            isDrawingStroke = true;
+            const rect = drawCanvas.getBoundingClientRect();
+            currentPoints = [{ x: e.clientX - rect.left, y: e.clientY - rect.top }];
+        });
+
+        drawCanvas.addEventListener('mousemove', (e) => {
+            if (!isDrawingStroke) return;
+            const rect = drawCanvas.getBoundingClientRect();
+            currentPoints.push({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+
+            drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+            drawCtx.strokeStyle = colorPicker.value;
+            drawCtx.lineWidth = parseInt(strokeWidthInput.value, 10);
+            drawCtx.lineCap = 'round';
+            drawCtx.lineJoin = 'round';
+
+            drawCtx.beginPath();
+            drawCtx.moveTo(currentPoints[0].x, currentPoints[0].y);
+            for (let i = 1; i < currentPoints.length; i++) {
+                drawCtx.lineTo(currentPoints[i].x, currentPoints[i].y);
+            }
+            drawCtx.stroke();
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (!isDrawingStroke) return;
+            isDrawingStroke = false;
+            drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+
+            if (currentPoints.length < 2) return;
+
+            const pad = parseInt(strokeWidthInput.value, 10) + 4;
+            const xs = currentPoints.map(p => p.x);
+            const ys = currentPoints.map(p => p.y);
+            const minX = Math.max(0, Math.min(...xs) - pad);
+            const minY = Math.max(0, Math.min(...ys) - pad);
+            const maxX = Math.min(drawCanvas.width, Math.max(...xs) + pad);
+            const maxY = Math.min(drawCanvas.height, Math.max(...ys) + pad);
+
+            const boxW = Math.max(15, maxX - minX);
+            const boxH = Math.max(15, maxY - minY);
+
+            // Normalize stroke coordinates inside its own bounding box (0 to 1)
+            const normPoints = currentPoints.map(p => ({
+                nx: (p.x - minX) / boxW,
+                ny: (p.y - minY) / boxH
+            }));
+
+            const newLayer = {
+                id: Date.now(),
+                name: `Drawing ${layerCounter++}`,
+                type: 'drawing',
+                page: currentPage,
+                points: normPoints,
+                color: colorPicker.value,
+                strokeWidth: parseInt(strokeWidthInput.value, 10),
+                lockAspect: false,
+                xPct: minX / drawCanvas.width,
+                yPct: minY / drawCanvas.height,
+                wPct: boxW / drawCanvas.width,
+                hPct: boxH / drawCanvas.height,
+                locked: false
+            };
+
+            layers.push(newLayer);
+            renderAllLayers();
+        });
+
+        // 6. Render Layers on Page & Right Sidebar
+        function renderAllLayers() {
+            document.querySelectorAll('.layer-item').forEach(el => el.remove());
+
+            const pageLayers = layers.filter(l => l.page === currentPage);
+            const cW = pdfCanvas.width;
+            const cH = pdfCanvas.height;
+
+            pageLayers.forEach((layer, index) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'layer-item';
+                if (layer.id === selectedLayerId) wrapper.classList.add('selected');
+                if (layer.locked) wrapper.classList.add('locked');
+
+                // z-index reflects exact bottom-to-top layer order
+                wrapper.style.zIndex = index + 10;
+                wrapper.style.left = `${layer.xPct * cW}px`;
+                wrapper.style.top = `${layer.yPct * cH}px`;
+                wrapper.style.width = `${layer.wPct * cW}px`;
+                wrapper.style.height = `${layer.hPct * cH}px`;
+
+                if (layer.type === 'image') {
+                    const img = document.createElement('img');
+                    img.src = layer.dataUrl;
+                    wrapper.appendChild(img);
+                } else if (layer.type === 'shape') {
+                    wrapper.appendChild(createShapeSVG(layer));
+                } else if (layer.type === 'drawing') {
+                    wrapper.appendChild(createDrawingSVG(layer));
+                }
+
+                const resizeHandle = document.createElement('div');
+                resizeHandle.className = 'resize-handle';
+                wrapper.appendChild(resizeHandle);
+
+                pageContainer.appendChild(wrapper);
+                attachLayerInteractions(wrapper, resizeHandle, layer);
+            });
+
+            renderSidebar(pageLayers);
+        }
+
+        function createShapeSVG(layer) {
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('width', '100%');
+            svg.setAttribute('height', '100%');
+            svg.style.display = 'block';
+            svg.style.overflow = 'visible';
+
+            let el;
+            if (layer.shapeType === 'rect') {
+                el = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                el.setAttribute('x', '0');
+                el.setAttribute('y', '0');
+                el.setAttribute('width', '100%');
+                el.setAttribute('height', '100%');
+            } else if (layer.shapeType === 'circle') {
+                el = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
+                el.setAttribute('cx', '50%');
+                el.setAttribute('cy', '50%');
+                el.setAttribute('rx', '50%');
+                el.setAttribute('ry', '50%');
+            } else if (layer.shapeType === 'line') {
+                el = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                el.setAttribute('x1', '0%');
+                el.setAttribute('y1', '50%');
+                el.setAttribute('x2', '100%');
+                el.setAttribute('y2', '50%');
+            }
+
+            el.setAttribute('fill', 'none');
+            el.setAttribute('stroke', layer.color);
+            el.setAttribute('stroke-width', layer.strokeWidth);
+            svg.appendChild(el);
+            return svg;
+        }
+
+        function createDrawingSVG(layer) {
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('viewBox', '0 0 100 100');
+            svg.setAttribute('preserveAspectRatio', 'none');
+            svg.setAttribute('width', '100%');
+            svg.setAttribute('height', '100%');
+            svg.style.display = 'block';
+            svg.style.overflow = 'visible';
+
+            const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+            const ptsStr = layer.points.map(p => `${p.nx * 100},${p.ny * 100}`).join(' ');
+            polyline.setAttribute('points', ptsStr);
+            polyline.setAttribute('fill', 'none');
+            polyline.setAttribute('stroke', layer.color);
+            polyline.setAttribute('stroke-width', layer.strokeWidth);
+            polyline.setAttribute('vector-effect', 'non-scaling-stroke');
+            polyline.setAttribute('stroke-linecap', 'round');
+            polyline.setAttribute('stroke-linejoin', 'round');
+
+            svg.appendChild(polyline);
+            return svg;
+        }
+
+        // 7. Drag, Resize (with Fixed Aspect Ratio for Images), and Lock Enforcement
+        function attachLayerInteractions(wrapper, handle, layer) {
+            let isDragging = false;
+            let isResizing = false;
+            let startX, startY, startLeft, startTop, startWidth, startHeight;
+
+            wrapper.addEventListener('mousedown', (e) => {
+                if (isDrawMode) return;
+                e.stopPropagation();
+
+                if (selectedLayerId !== layer.id) {
+                    selectedLayerId = layer.id;
+                    renderAllLayers();
+                    // Re-grab new DOM element after re-render if needed
+                }
+
+                if (layer.locked) return; // Prevent movement if locked
+
+                if (e.target === handle) {
+                    isResizing = true;
+                    startX = e.clientX;
+                    startY = e.clientY;
+                    startWidth = wrapper.offsetWidth;
+                    startHeight = wrapper.offsetHeight;
+                } else {
+                    isDragging = true;
+                    startX = e.clientX;
+                    startY = e.clientY;
+                    startLeft = wrapper.offsetLeft;
+                    startTop = wrapper.offsetTop;
+                }
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (!isDragging && !isResizing) return;
+                if (layer.locked) return;
+
+                const cW = pdfCanvas.width;
+                const cH = pdfCanvas.height;
+
+                if (isDragging) {
+                    let newLeft = startLeft + (e.clientX - startX);
+                    let newTop = startTop + (e.clientY - startY);
+
+                    newLeft = Math.max(0, Math.min(newLeft, cW - wrapper.offsetWidth));
+                    newTop = Math.max(0, Math.min(newTop, cH - wrapper.offsetHeight));
+
+                    wrapper.style.left = `${newLeft}px`;
+                    wrapper.style.top = `${newTop}px`;
+
+                    layer.xPct = newLeft / cW;
+                    layer.yPct = newTop / cH;
+                }
+
+                if (isResizing) {
+                    let newWidth = Math.max(15, startWidth + (e.clientX - startX));
+                    let newHeight = Math.max(15, startHeight + (e.clientY - startY));
+
+                    // Enforce fixed aspect ratio for images
+                    if (layer.lockAspect) {
+                        newHeight = newWidth / layer.aspectRatio;
+                        if (wrapper.offsetLeft + newWidth > cW) {
+                            newWidth = cW - wrapper.offsetLeft;
+                            newHeight = newWidth / layer.aspectRatio;
+                        }
+                        if (wrapper.offsetTop + newHeight > cH) {
+                            newHeight = cH - wrapper.offsetTop;
+                            newWidth = newHeight * layer.aspectRatio;
+                        }
+                    } else {
+                        if (wrapper.offsetLeft + newWidth > cW) newWidth = cW - wrapper.offsetLeft;
+                        if (wrapper.offsetTop + newHeight > cH) newHeight = cH - wrapper.offsetTop;
+                    }
+
+                    wrapper.style.width = `${newWidth}px`;
+                    wrapper.style.height = `${newHeight}px`;
+
+                    layer.wPct = newWidth / cW;
+                    layer.hPct = newHeight / cH;
+                }
+            });
+
+            window.addEventListener('mouseup', () => {
+                isDragging = false;
+                isResizing = false;
+            });
+        }
+
+        // 8. Right Sidebar: Layer Ordering (Top/Bottom) & Locking
+        function renderSidebar(pageLayers) {
+            layersList.innerHTML = '';
+            layerCount.textContent = pageLayers.length;
+
+            if (pageLayers.length === 0) {
+                layersList.innerHTML = '<div class="empty-layers">No layers on this page yet.</div>';
+                return;
+            }
+
+            // Display top-most layer at top of list
+            const reversed = [...pageLayers].reverse();
+
+            reversed.forEach((layer, revIdx) => {
+                const row = document.createElement('div');
+                row.className = 'layer-row';
+                if (layer.id === selectedLayerId) row.classList.add('selected');
+
+                const icon = layer.type === 'image' ? '🖼️' : (layer.type === 'shape' ? '📐' : '✏️');
+
+                const nameDiv = document.createElement('div');
+                nameDiv.className = 'layer-name';
+                nameDiv.innerHTML = `<span>${icon}</span><span>${layer.name}</span>`;
+
+                const actionsDiv = document.createElement('div');
+                actionsDiv.className = 'layer-actions';
+
+                // Bring Forward (Up)
+                const upBtn = document.createElement('button');
+                upBtn.className = 'icon-btn';
+                upBtn.textContent = '▲';
+                upBtn.title = 'Bring Forward';
+                upBtn.disabled = revIdx === 0;
+                upBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    moveLayerOrder(layer.id, 1);
+                };
+
+                // Send Backward (Down)
+                const downBtn = document.createElement('button');
+                downBtn.className = 'icon-btn';
+                downBtn.textContent = '▼';
+                downBtn.title = 'Send Backward';
+                downBtn.disabled = revIdx === reversed.length - 1;
+                downBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    moveLayerOrder(layer.id, -1);
+                };
+
+                // Lock / Unlock Toggle
+                const lockBtn = document.createElement('button');
+                lockBtn.className = 'icon-btn' + (layer.locked ? ' locked-active' : '');
+                lockBtn.textContent = layer.locked ? '🔒' : '🔓';
+                lockBtn.title = layer.locked ? 'Unlock Layer' : 'Lock Layer';
+                lockBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    layer.locked = !layer.locked;
+                    renderAllLayers();
+                };
+
+                // Delete Layer
+                const delBtn = document.createElement('button');
+                delBtn.className = 'icon-btn delete-hover';
+                delBtn.textContent = '✕';
+                delBtn.title = 'Delete Layer';
+                delBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    layers = layers.filter(l => l.id !== layer.id);
+                    if (selectedLayerId === layer.id) selectedLayerId = null;
+                    renderAllLayers();
+                };
+
+                actionsDiv.append(upBtn, downBtn, lockBtn, delBtn);
+                row.append(nameDiv, actionsDiv);
+
+                row.onclick = () => {
+                    disableDrawMode();
+                    selectedLayerId = layer.id;
+                    renderAllLayers();
+                };
+
+                layersList.appendChild(row);
+            });
+        }
+
+        function moveLayerOrder(layerId, direction) {
+            // Find indices among layers belonging to the current page
+            const pageIndices = [];
+            layers.forEach((l, idx) => {
+                if (l.page === currentPage) pageIndices.push(idx);
+            });
+
+            const posInPage = pageIndices.findIndex(idx => layers[idx].id === layerId);
+            const targetPos = posInPage + direction;
+
+            if (targetPos < 0 || targetPos >= pageIndices.length) return;
+
+            const idxA = pageIndices[posInPage];
+            const idxB = pageIndices[targetPos];
+
+            // Swap elements in main array
+            [layers[idxA], layers[idxB]] = [layers[idxB], layers[idxA]];
+            renderAllLayers();
+        }
+
+        // 9. Export All Layers in Exact Z-Order via pdf-lib
+        function hexToPdfRgb(hex, rgbFn) {
+            const clean = hex.replace('#', '');
+            const r = parseInt(clean.substring(0, 2), 16) / 255;
+            const g = parseInt(clean.substring(2, 4), 16) / 255;
+            const b = parseInt(clean.substring(4, 6), 16) / 255;
+            return rgbFn(r, g, b);
+        }
+
+        exportBtn.addEventListener('click', async () => {
+            exportBtn.disabled = true;
+            exportBtn.textContent = '⏳ Exporting...';
+
+            try {
+                const { PDFDocument, rgb } = PDFLib;
+                const finalPdf = await PDFDocument.load(pdfBytes);
+                const pages = finalPdf.getPages();
+
+                // Loop through layers in exact bottom-to-top stacking order
+                for (const layer of layers) {
+                    const targetPage = pages[layer.page - 1];
+                    const { width: pageW, height: pageH } = targetPage.getSize();
+                    const scaleFactor = pageW / pdfCanvas.width;
+
+                    const drawW = layer.wPct * pageW;
+                    const drawH = layer.hPct * pageH;
+                    const drawX = layer.xPct * pageW;
+                    const drawY = pageH - (layer.yPct * pageH) - drawH;
+
+                    if (layer.type === 'image') {
+                        const embeddedImg = layer.imgType === 'image/png'
+                            ? await finalPdf.embedPng(layer.dataUrl)
+                            : await finalPdf.embedJpg(layer.dataUrl);
+
+                        targetPage.drawImage(embeddedImg, {
+                            x: drawX,
+                            y: drawY,
+                            width: drawW,
+                            height: drawH
+                        });
+                    } else if (layer.type === 'shape') {
+                        const color = hexToPdfRgb(layer.color, rgb);
+                        const thickness = layer.strokeWidth * scaleFactor;
+
+                        if (layer.shapeType === 'rect') {
+                            targetPage.drawRectangle({
+                                x: drawX,
+                                y: drawY,
+                                width: drawW,
+                                height: drawH,
+                                borderColor: color,
+                                borderWidth: thickness
+                            });
+                        } else if (layer.shapeType === 'circle') {
+                            targetPage.drawEllipse({
+                                x: drawX + drawW / 2,
+                                y: drawY + drawH / 2,
+                                xScale: drawW / 2,
+                                yScale: drawH / 2,
+                                borderColor: color,
+                                borderWidth: thickness
+                            });
+                        } else if (layer.shapeType === 'line') {
+                            targetPage.drawLine({
+                                start: { x: drawX, y: drawY + drawH / 2 },
+                                end: { x: drawX + drawW, y: drawY + drawH / 2 },
+                                color: color,
+                                thickness: thickness
+                            });
+                        }
+                    } else if (layer.type === 'drawing') {
+                        const color = hexToPdfRgb(layer.color, rgb);
+                        const thickness = layer.strokeWidth * scaleFactor;
+                        const topY = drawY + drawH;
+
+                        for (let i = 0; i < layer.points.length - 1; i++) {
+                            const p1 = layer.points[i];
+                            const p2 = layer.points[i + 1];
+
+                            targetPage.drawLine({
+                                start: {
+                                    x: drawX + p1.nx * drawW,
+                                    y: topY - p1.ny * drawH
+                                },
+                                end: {
+                                    x: drawX + p2.nx * drawW,
+                                    y: topY - p2.ny * drawH
+                                },
+                                color: color,
+                                thickness: thickness
+                            });
+                        }
+                    }
+                }
+
+                const modifiedPdfBytes = await finalPdf.save();
+                const blob = new Blob([modifiedPdfBytes], { type: 'application/pdf' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'annotated-document.pdf';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                alert('Error exporting PDF: ' + err.message);
+            } finally {
+                exportBtn.disabled = false;
+                exportBtn.textContent = '💾 Export PDF';
+            }
+        });
+    </script>
+</body>
+</html>
